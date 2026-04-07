@@ -1,0 +1,212 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model activity_type {
+  activity_id Int      @id @default(autoincrement())
+  name        String   @db.VarChar(50)
+  xp_reward   Int
+  xp_log      xp_log[]
+}
+
+model admin_log {
+  log_id                              Int        @id @default(autoincrement())
+  admin_id                            Int
+  target_user_id                      Int
+  action_type                         Int
+  created_at                          DateTime   @default(now()) @db.Timestamp(6)
+  shift_id                            Int
+  user_admin_log_admin_idTouser       user       @relation("admin_log_admin_idTouser", fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  work_shift                          work_shift @relation(fields: [shift_id], references: [shift_id], onDelete: NoAction, onUpdate: NoAction)
+  user_admin_log_target_user_idTouser user       @relation("admin_log_target_user_idTouser", fields: [target_user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model booking {
+  booking_id          Int                   @id @default(autoincrement())
+  user_id             Int
+  room_id             Int
+  booking_date        DateTime              @db.Date
+  time_begin          DateTime              @db.Time(6)
+  time_end            DateTime              @db.Time(6)
+  status_id           Int?
+  total_cost          Decimal               @db.Decimal(15, 2)
+  created_at          DateTime              @default(now()) @db.Timestamp(6)
+  paid_sum            Decimal?              @default(0.00) @db.Decimal(15, 2)
+  is_paid             Boolean               @default(false)
+  room                room                  @relation(fields: [room_id], references: [room_id], onDelete: NoAction, onUpdate: NoAction)
+  status_booking      status_booking?       @relation(fields: [status_id], references: [status_id], onDelete: NoAction, onUpdate: NoAction)
+  user                user                  @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  deposit_transaction deposit_transaction[]
+}
+
+model branch_office {
+  branch_id  Int          @id @default(autoincrement())
+  address    String       @db.VarChar(255)
+  ip_address String       @db.VarChar(50)
+  room       room[]
+  staff      staff[]
+  work_shift work_shift[]
+}
+
+model category {
+  category_id Int    @id @default(autoincrement())
+  name        String @db.VarChar(50)
+  room        room[]
+}
+
+model deposit_transaction {
+  transaction_id                          Int            @id @default(autoincrement())
+  user_id                                 Int
+  amount                                  Decimal        @db.Decimal(15, 2)
+  created_at                              DateTime       @default(now()) @db.Timestamp(6)
+  current_balance                         Decimal        @db.Decimal(15, 2)
+  booking_id                              Int?
+  admin_id                                Int?
+  operation_type_id                       Int
+  external_transaction_id                 String?        @db.VarChar(50)
+  user_deposit_transaction_admin_idTouser user?          @relation("deposit_transaction_admin_idTouser", fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  booking                                 booking?       @relation(fields: [booking_id], references: [booking_id], onDelete: NoAction, onUpdate: NoAction)
+  type_operation                          type_operation @relation(fields: [operation_type_id], references: [operation_id], onDelete: NoAction, onUpdate: NoAction)
+  user_deposit_transaction_user_idTouser  user           @relation("deposit_transaction_user_idTouser", fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model loyalty {
+  user_id          Int           @id
+  loyalty_level_id Int
+  xp_amount        Int           @default(0)
+  current_balance  Decimal       @default(0.00) @db.Decimal(15, 2)
+  loyalty_level    loyalty_level @relation(fields: [loyalty_level_id], references: [level_id], onDelete: NoAction, onUpdate: NoAction)
+  user             user          @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model loyalty_level {
+  level_id    Int       @id @default(autoincrement())
+  name        String    @db.VarChar(50)
+  level_order Int
+  discount    Decimal?  @db.Decimal(5, 2)
+  loyalty     loyalty[]
+}
+
+model permission {
+  user_id Int
+  role_id Int
+  role    role @relation(fields: [role_id], references: [role_id], onDelete: NoAction, onUpdate: NoAction)
+  user    user @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([user_id, role_id])
+}
+
+model price_history {
+  price_id  Int       @id @default(autoincrement())
+  room_id   Int
+  price     Decimal   @db.Decimal(15, 2)
+  date_from DateTime  @default(now()) @db.Timestamp(6)
+  date_to   DateTime? @db.Timestamp(6)
+  admin_id  Int
+  user      user      @relation(fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  room      room      @relation(fields: [room_id], references: [room_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model role {
+  role_id    Int          @id @default(autoincrement())
+  name_role  String       @db.VarChar(50)
+  permission permission[]
+}
+
+model room {
+  room_id       Int             @id @default(autoincrement())
+  category_id   Int
+  branch_id     Int
+  max_people    Int
+  price         Decimal         @db.Decimal(15, 2)
+  description   String?
+  name          String          @db.VarChar(50)
+  image         String?
+  booking       booking[]
+  price_history price_history[]
+  branch_office branch_office   @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction)
+  category      category        @relation(fields: [category_id], references: [category_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model staff {
+  user_id       Int            @id
+  branch_id     Int?
+  branch_office branch_office? @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction)
+  user          user           @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model status_booking {
+  status_id Int       @id @default(autoincrement())
+  name      String    @db.VarChar(50)
+  booking   booking[]
+}
+
+model type_operation {
+  operation_id        Int                   @id @default(autoincrement())
+  name                String                @db.VarChar(50)
+  deposit_transaction deposit_transaction[]
+}
+
+model user {
+  user_id                                                Int                   @id @default(autoincrement())
+  password_hash                                          String                @db.VarChar(255)
+  salt                                                   String
+  phone                                                  String                @unique(map: "user_phone_unique") @db.VarChar(20)
+  admin_log_admin_log_admin_idTouser                     admin_log[]           @relation("admin_log_admin_idTouser")
+  admin_log_admin_log_target_user_idTouser               admin_log[]           @relation("admin_log_target_user_idTouser")
+  booking                                                booking[]
+  deposit_transaction_deposit_transaction_admin_idTouser deposit_transaction[] @relation("deposit_transaction_admin_idTouser")
+  deposit_transaction_deposit_transaction_user_idTouser  deposit_transaction[] @relation("deposit_transaction_user_idTouser")
+  loyalty                                                loyalty?
+  permission                                             permission[]
+  price_history                                          price_history[]
+  staff                                                  staff?
+  user_info                                              user_info?
+  work_shift                                             work_shift[]
+  xp_log                                                 xp_log[]
+}
+
+model user_info {
+  user_id    Int     @id
+  name       String  @db.VarChar(50)
+  surname    String  @db.VarChar(50)
+  is_blocked Boolean @default(false)
+  user       user    @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model work_shift {
+  shift_id      Int           @id @default(autoincrement())
+  staff_id      Int
+  branch_id     Int
+  opened_at     DateTime      @default(now()) @db.Timestamp(6)
+  closed_at     DateTime?     @db.Timestamp(6)
+  ip_address    String        @db.VarChar(50)
+  admin_log     admin_log[]
+  branch_office branch_office @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction)
+  user          user          @relation(fields: [staff_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model xp_log {
+  log_id           Int            @id @default(autoincrement())
+  user_id          Int
+  xp_gain          Int
+  created_at       DateTime       @default(now()) @db.Timestamp(6)
+  activity_type_id Int?
+  activity_type    activity_type? @relation(fields: [activity_type_id], references: [activity_id], onDelete: NoAction, onUpdate: NoAction)
+  user             user           @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model game {
+  game_id     Int       @id @default(autoincrement())
+  title       String    @db.VarChar(255)
+  description String?
+  genre       String?   @db.VarChar(100)
+  image_url   String?
+  category_id Int?
+  created_at  DateTime? @default(now()) @db.Timestamptz(6)
+}
