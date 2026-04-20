@@ -11,6 +11,7 @@ model activity_type {
   activity_id Int      @id @default(autoincrement())
   name        String   @db.VarChar(50)
   xp_reward   Int
+  description String   @db.VarChar(100)
   xp_log      xp_log[]
 }
 
@@ -66,10 +67,11 @@ model deposit_transaction {
   created_at                              DateTime       @default(now()) @db.Timestamp(6)
   current_balance                         Decimal        @db.Decimal(15, 2)
   booking_id                              Int?
-  admin_id                                Int?
+  admin_id                                Int
   operation_type_id                       Int
   external_transaction_id                 String?        @db.VarChar(50)
-  user_deposit_transaction_admin_idTouser user?          @relation("deposit_transaction_admin_idTouser", fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  comment                                 String?
+  user_deposit_transaction_admin_idTouser user           @relation("deposit_transaction_admin_idTouser", fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
   booking                                 booking?       @relation(fields: [booking_id], references: [booking_id], onDelete: NoAction, onUpdate: NoAction)
   type_operation                          type_operation @relation(fields: [operation_type_id], references: [operation_id], onDelete: NoAction, onUpdate: NoAction)
   user_deposit_transaction_user_idTouser  user           @relation("deposit_transaction_user_idTouser", fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
@@ -89,6 +91,7 @@ model loyalty_level {
   name        String    @db.VarChar(50)
   level_order Int
   discount    Decimal?  @db.Decimal(5, 2)
+  min_xp      BigInt
   loyalty     loyalty[]
 }
 
@@ -119,18 +122,22 @@ model role {
 }
 
 model room {
-  room_id       Int             @id @default(autoincrement())
-  category_id   Int
-  branch_id     Int
-  max_people    Int
-  price         Decimal         @db.Decimal(15, 2)
-  description   String?
-  name          String          @db.VarChar(50)
-  image         String?
-  booking       booking[]
-  price_history price_history[]
-  branch_office branch_office   @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction)
-  category      category        @relation(fields: [category_id], references: [category_id], onDelete: NoAction, onUpdate: NoAction)
+  room_id          Int                @id @default(autoincrement())
+  category_id      Int
+  branch_id        Int
+  max_people       Int
+  price            Decimal            @db.Decimal(15, 2)
+  description      String?
+  name             String             @db.VarChar(50)
+  image            String?
+  is_active        Boolean
+  is_deleted       Boolean
+  booking          booking[]
+  price_history    price_history[]
+  branch_office    branch_office      @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction)
+  category         category           @relation(fields: [category_id], references: [category_id], onDelete: NoAction, onUpdate: NoAction)
+  room_maintenance room_maintenance[]
+  roomstatuslog    roomstatuslog[]
 }
 
 model staff {
@@ -165,6 +172,7 @@ model user {
   loyalty                                                loyalty?
   permission                                             permission[]
   price_history                                          price_history[]
+  roomstatuslog                                          roomstatuslog[]
   staff                                                  staff?
   user_info                                              user_info?
   work_shift                                             work_shift[]
@@ -209,4 +217,40 @@ model game {
   image_url   String?
   category_id Int?
   created_at  DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model roomstatuslog {
+  log_id     Int       @id @default(autoincrement())
+  room_id    Int
+  action     String    @db.VarChar(50)
+  reason     String?
+  changed_by Int
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  room       room      @relation(fields: [room_id], references: [room_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_room")
+  user       user      @relation(fields: [changed_by], references: [user_id], onDelete: NoAction, onUpdate: NoAction, map: "fk_user")
+
+  @@index([created_at], map: "idx_room_status_created_at")
+  @@index([room_id], map: "idx_room_status_room_id")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model room_maintenance {
+  maintenance_id Int       @id @default(autoincrement())
+  room_id        Int
+  start_at       DateTime  @db.Timestamptz(6)
+  end_at         DateTime  @db.Timestamptz(6)
+  reason         String?
+  created_at     DateTime? @default(now()) @db.Timestamptz(6)
+  room           room      @relation(fields: [room_id], references: [room_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_room_maintenance")
+
+  @@index([start_at, end_at], map: "idx_maintenance_dates")
+  @@index([room_id], map: "idx_maintenance_room_id")
+}
+
+model loyalty_package {
+  package_id Int      @id @default(autoincrement())
+  name       String   @db.VarChar(100)
+  price      Decimal  @db.Decimal(10, 2)
+  is_active  Boolean? @default(true)
 }

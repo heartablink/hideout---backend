@@ -6,8 +6,15 @@ import authRoute from './routes/authRoute.js';
 import gamesRoute from './routes/gamesRoute.js';
 import categoryRouter from './routes/categoryRoute.js';
 import branchRouter from './routes/branchRoute.js';
+import bookingRouter from './routes/bookingRoute.js';
+import userRoute from './routes/userRoute.js';
 
 const app = express();
+
+// Этот код учит JSON работать с числами BigInt
+BigInt.prototype.toJSON = function () {
+  return this.toString();
+};
 
 app.use(express.json());
 
@@ -18,7 +25,16 @@ app.use(
   }),
 );
 
-app.use('/api', authRoute, roomRouter, gamesRoute, categoryRouter, branchRouter);
+app.use(
+  '/api',
+  authRoute,
+  roomRouter,
+  gamesRoute,
+  categoryRouter,
+  branchRouter,
+  bookingRouter,
+  userRoute,
+);
 app.use('/uploads', express.static('uploads'));
 
 export default app;

@@ -52,7 +52,7 @@ const registration = async (req, res) => {
     //создаем jwt токен
     const token = jwt.sign(
       {
-        id: newUser.id,
+        id: newUser.user_id,
       },
       'secret123',
       {
@@ -85,7 +85,7 @@ const authorization = async (req, res) => {
     //создаем токен с зашифрованными данными
     const token = jwt.sign(
       {
-        id: user.id,
+        id: user.user_id,
       },
       'secret123',
       {
