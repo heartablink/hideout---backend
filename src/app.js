@@ -9,7 +9,11 @@ import branchRouter from './routes/branchRoute.js';
 import bookingRouter from './routes/bookingRoute.js';
 import userRoute from './routes/userRoute.js';
 
+//задачи крон
+import { initCronJobs } from './services/cronJobs.js';
+
 const app = express();
+initCronJobs();
 
 // Этот код учит JSON работать с числами BigInt
 BigInt.prototype.toJSON = function () {

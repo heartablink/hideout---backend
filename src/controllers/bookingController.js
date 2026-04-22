@@ -3,7 +3,18 @@ import prisma from '../config/db.js';
 import { now } from 'sequelize/lib/utils';
 import { checkActivities } from '../services/loyaltyService.js';
 
-const createBooking = async (req, res) => {
+///---------------------------
+//юкасса
+import { YooCheckout } from '@a2seven/yoo-checkout';
+import { v4 as uuidv4 } from 'uuid'; //генерация универсальных уникальных идентификаторов (как ключ идемпотентности)
+
+const checkout = new YooCheckout({
+  shopId: '1338646',
+  secretKey: 'test_sAwfJLiJ7LO5ww9p7d8-EJQqivgKrLJVHuA36_SRDRU',
+});
+//----------------------------
+
+const createBookingDeposit = async (req, res) => {
   try {
     // 1. Проверяем, что middleware сработал
     if (!req.user) {
@@ -122,20 +133,33 @@ const createBooking = async (req, res) => {
 
 const createBookingExternal = async (req, res) => {
   try {
-    const { userId, role } = req.user;
+    // 1. Проверяем, что middleware сработал
+    if (!req.user) {
+      return res.status(401).json({ message: 'Пользователь не авторизован' });
+    }
+
+    const { userId } = req.user; // Из middleware
     const { roomId, date, slots } = req.body;
 
-    if (role !== 'Client') {
+    const user = await prisma.permission.findFirst({ where: { user_id: userId } });
+
+    if (!user) {
+      return res.status(404).json({ message: 'Пользователь не найден' });
+    }
+    if (user.role_id !== 3) {
       return res.status(403).json({ message: 'Только клиенты могут бронировать' });
     }
 
+    // Подготовка времени
+    //используем Z для корректности UTC
     const sortedSlots = slots.sort();
-    const timeBegin = new Date(`${date}T${sortedSlots[0]}:00`);
-    const timeEnd = new Date(`${date}T${sortedSlots[sortedSlots.length - 1]}:00`);
-    timeEnd.setHours(timeEnd.getHours() + 1);
+    const timeBegin = new Date(`${date}T${sortedSlots[0]}:00Z`);
+    const timeEnd = new Date(`${date}T${sortedSlots[sortedSlots.length - 1]}:00Z`);
+    timeEnd.setUTCHours(timeEnd.getUTCHours() + 1);
 
+    //Запускаем транзакцию для проверки доступности и создания "черновика" брони
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Проверка на двойное бронирование
+      // Проверка на двойное бронирование
       const existing = await tx.booking.findFirst({
         where: {
           room_id: Number(roomId),
@@ -147,17 +171,41 @@ const createBookingExternal = async (req, res) => {
 
       if (existing) throw new Error('Один из выбранных слотов уже занят');
 
-      const room = await tx.room.findUnique({
+      const room = await tx.room.findFirst({
         where: { room_id: Number(roomId) },
         include: { branch_office: true },
       });
+
+      // РАСЧЕТ СТОИМОСТИ
       const totalPrice = Number(room.price) * slots.length;
 
-      // --- ИМИТАЦИЯ ВНЕШНЕЙ ОПЛАТЫ ---
-      // В реальной жизни здесь был бы запрос к API платежки
-      const mockExternalId = `PAY_CARD_${Math.random().toString(36).substring(7).toUpperCase()}`;
+      //---------------------------
+      // Создаем платеж в ЮKassa
+      const idempotenceKey = uuidv4();
+      const payment = await checkout.createPayment(
+        {
+          amount: {
+            value: newBooking.total_cost.toFixed(2),
+            currency: 'RUB',
+          },
+          confirmation: {
+            type: 'redirect',
+            // ВАЖНО: прокидываем ID брони в URL возврата
+            return_url: `http://localhost:3000/booking/success?bookingId=${newBooking.booking_id}`,
+          },
+          description: `Оплата бронирования №${newBooking.booking_id} (Комната: ${roomId})`,
+          metadata: {
+            bookingId: newBooking.booking_id,
+            userId: userId,
+          },
+          capture: true,
+        },
+        idempotenceKey,
+      );
+      //---------------------------
 
-      // 2. Создаем бронирование
+      // Создаем бронирование со статусом "Ожидает оплаты" (status_id: 2 или какой у тебя по базе)
+      // ВАЖНО: is_paid: false
       const booking = await tx.booking.create({
         data: {
           user_id: userId,
@@ -166,44 +214,82 @@ const createBookingExternal = async (req, res) => {
           time_begin: timeBegin,
           time_end: timeEnd,
           total_cost: totalPrice,
-          paid_sum: totalPrice,
-          is_paid: true,
-          status_id: 1, // 'Оплачено'
+          paid_sum: 0,
+          is_paid: false,
+          status_id: 2, // Предположим, 2 - это "Ожидает оплаты"
+          created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
         },
       });
 
-      // 3. Записываем транзакцию (external_transaction_id ОБЯЗАТЕЛЕН)
-      const currentLoyalty = await tx.loyalty.findUnique({ where: { user_id: userId } });
-
-      await tx.deposit_transaction.create({
-        data: {
-          user_id: userId,
-          amount: -totalPrice,
-          current_balance: currentLoyalty.current_balance, // Баланс не менялся!
-          booking_id: booking.booking_id,
-          operation_type_id: 3, // Допустим, 3 - 'Оплата картой'
-          admin_id: userId,
-          external_transaction_id: mockExternalId,
-          created_at: new Date(),
-        },
-      });
-
-      // 4. Проверяем "Щедрый депозит" (так как деньги пришли извне)
-      await checkDepositActivity(tx, userId, totalPrice);
-
-      // 5. Проверяем игровые активности (Ранняя пташка, Киберспортсмен и т.д.)
-      await checkActivities(tx, userId, {
-        ...booking,
-        branch_id: room.branch_id,
-      });
-
-      return booking;
+      return {
+        confirmationUrl: payment.confirmation.confirmation_url,
+        bookingId: booking.booking_id,
+      };
     });
 
-    res.status(201).json({ message: 'Оплата картой прошла успешно', result });
+    res.status(201).json(result);
   } catch (err) {
+    console.error('Ошибка внешней оплаты:', err);
     res.status(400).json({ message: err.message });
   }
 };
 
-export default { createBooking, createBookingExternal };
+export const handleYookassaWebhook = async (req, res) => {
+  const { event, object } = req.body;
+
+  if (event === 'payment.succeeded') {
+    const paymentId = object.id;
+    const metadata = object.metadata; // Те самые данные, что мы передавали
+
+    // Находим бронь и обновляем её
+    await prisma.booking.updateMany({
+      where: {
+        user_id: Number(metadata.userId),
+        room_id: Number(metadata.roomId),
+        booking_date: new Date(metadata.date),
+        status_id: 2, // Ожидает оплаты
+      },
+      data: {
+        is_paid: true,
+        status_id: 1, // Оплачено
+        paid_sum: Number(object.amount.value),
+      },
+    });
+
+    // Создаем запись о финансовой операции
+    await tx.deposit_transaction.create({
+      data: {
+        user_id: Number(metadata.userId),
+        amount: Number(object.amount.value), // Положительное число, т.к. это приход
+        current_balance: currentBalance, // Текущий баланс лояльности (он не меняется)
+        booking_id: updatedBooking.booking_id,
+        operation_type_id: 3, // Например, 3 - 'Внешняя оплата'
+        admin_id: 0, // Системная запись
+        external_transaction_id: object.id, // ID платежа из ЮKassa (типа '27d...')
+        comment: `Оплата картой через ЮKassa. Бронь №${updatedBooking.booking_id}`,
+        created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
+      },
+    });
+
+    // Здесь же можно начислить XP или отправить Email
+    console.log(`Платеж ${paymentId} подтвержден!`);
+  }
+
+  res.sendStatus(200); // Обязательно отвечаем ЮKassa, что получили сигнал
+};
+
+const getBookingStatus = async (req, res) => {
+  const { bookingId } = req.params;
+  const booking = await prisma.booking.findUnique({
+    where: { booking_id: Number(bookingId) },
+  });
+
+  res.json({ is_paid: booking.is_paid });
+};
+
+export default {
+  createBookingDeposit,
+  createBookingExternal,
+  handleYookassaWebhook,
+  getBookingStatus,
+};
