@@ -179,31 +179,6 @@ const createBookingExternal = async (req, res) => {
       // РАСЧЕТ СТОИМОСТИ
       const totalPrice = Number(room.price) * slots.length;
 
-      //---------------------------
-      // Создаем платеж в ЮKassa
-      const idempotenceKey = uuidv4();
-      const payment = await checkout.createPayment(
-        {
-          amount: {
-            value: newBooking.total_cost.toFixed(2),
-            currency: 'RUB',
-          },
-          confirmation: {
-            type: 'redirect',
-            // ВАЖНО: прокидываем ID брони в URL возврата
-            return_url: `http://localhost:3000/booking/success?bookingId=${newBooking.booking_id}`,
-          },
-          description: `Оплата бронирования №${newBooking.booking_id} (Комната: ${roomId})`,
-          metadata: {
-            bookingId: newBooking.booking_id,
-            userId: userId,
-          },
-          capture: true,
-        },
-        idempotenceKey,
-      );
-      //---------------------------
-
       // Создаем бронирование со статусом "Ожидает оплаты" (status_id: 2 или какой у тебя по базе)
       // ВАЖНО: is_paid: false
       const booking = await tx.booking.create({
@@ -220,6 +195,31 @@ const createBookingExternal = async (req, res) => {
           created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
         },
       });
+
+      //---------------------------
+      // Создаем платеж в ЮKassa
+      const idempotenceKey = uuidv4();
+      const payment = await checkout.createPayment(
+        {
+          amount: {
+            value: totalPrice.toFixed(2),
+            currency: 'RUB',
+          },
+          confirmation: {
+            type: 'redirect',
+            // ВАЖНО: прокидываем ID брони в URL возврата
+            return_url: `http://localhost:3000/booking/success?bookingId=${booking.booking_id}`,
+          },
+          description: `Оплата бронирования №${booking.booking_id} (Комната: ${roomId})`,
+          metadata: {
+            bookingId: booking.booking_id,
+            userId: userId,
+          },
+          capture: true,
+        },
+        idempotenceKey,
+      );
+      //---------------------------
 
       return {
         confirmationUrl: payment.confirmation.confirmation_url,

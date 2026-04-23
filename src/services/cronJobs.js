@@ -7,7 +7,7 @@ export const initCronJobs = () => {
       new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
       -15 * 60 * 1000,
     );
-    await prisma.booking.updateManyMany({
+    await prisma.booking.updateMany({
       where: {
         status_id: 2,
         is_paid: false,
