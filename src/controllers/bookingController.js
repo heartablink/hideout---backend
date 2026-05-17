@@ -1,7 +1,7 @@
 import { error } from 'node:console';
 import prisma from '../config/db.js';
 import { now } from 'sequelize/lib/utils';
-import { checkActivities } from '../services/loyaltyService.js';
+import { awardBaseXp, checkActivities } from '../services/loyaltyService.js';
 
 ///---------------------------
 //юкасса
@@ -110,12 +110,6 @@ const createBookingDeposit = async (req, res) => {
           created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
           comment: 'Оплата бронирования со игрового счета',
         },
-      });
-
-      // 7. Проверка активностей (XP начисляем от РЕАЛЬНО потраченных денег)
-      await checkActivities(tx, userId, {
-        ...booking,
-        branch_id: room.branch_id,
       });
 
       return {
@@ -419,21 +413,23 @@ const getUserBookings = async (req, res) => {
 
 const getTodayBookings = async (req, res) => {
   try {
-    // выбираем только сегодняшние бронирования
-    // начало и конец сегодняшнего дня
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
+    // Формируем сегодняшнюю дату по московскому времени (UTC+3)
+    const nowMoscow = new Date(Date.now() + 3 * 60 * 60 * 1000); // вы уже используете этот сдвиг
+    const todayStr = nowMoscow.toISOString().slice(0, 10); // "2026-05-17"
 
     //определяем филиал сотрудника
-    const staffRecord = await prisma.staff.findUnique({
-      where: { user_id: req.user.userId },
+    const staffRecord = await prisma.work_shift.findFirst({
+      where: {
+        staff_id: req.user.userId,
+        opened_at: {
+          gte: new Date(`${todayStr}T00:00:00.000Z`),
+          lte: new Date(`${todayStr}T23:59:59.999Z`),
+        },
+      },
     });
 
     const whereCondition = {
-      booking_date: { gte: todayStart, lte: todayEnd },
+      booking_date: new Date(`${todayStr}T00:00:00.000Z`),
     };
 
     if (staffRecord) {
@@ -479,6 +475,133 @@ const getTodayBookings = async (req, res) => {
   }
 };
 
+const startBooking = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { userId } = req.user;
+
+    // Получаем бронирование
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: Number(bookingId) },
+      include: { status_booking: true },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ message: 'Бронирование не найдено' });
+    }
+
+    // Проверяем, что бронирование можно запустить
+    const allowedStatuses = [1, 2, 6]; // Оплачено, Ожидает оплаты (онлайн), Ожидает оплаты (наличные)
+    if (!allowedStatuses.includes(booking.status_id)) {
+      return res.status(400).json({
+        message: `Нельзя запустить бронирование со статусом "${booking.status_booking.name}"`,
+      });
+    }
+
+    // Обновляем бронирование
+    const updatedBooking = await prisma.booking.update({
+      where: { booking_id: Number(bookingId) },
+      data: {
+        status_id: 7, // Выполняется
+        is_paid: true,
+        paid_sum: booking.total_cost,
+      },
+      include: {
+        room: { select: { name: true } },
+        status_booking: { select: { name: true } },
+      },
+    });
+
+    // Логируем действие администратора
+    const staffShift = await prisma.work_shift.findFirst({
+      where: {
+        user_id: userId,
+        closed_at: null, // открытая смена
+      },
+    });
+
+    if (staffShift) {
+      await prisma.admin_log.create({
+        data: {
+          admin_id: userId,
+          target_user_id: booking.user_id,
+          action_type: 'START_BOOKING',
+          shift_id: staffShift.shift_id,
+          created_at: new Date(Date.now() + 3 * 60 * 60 * 1000),
+        },
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Сеанс успешно запущен',
+      booking: {
+        id: updatedBooking.booking_id,
+        status: updatedBooking.status_booking.name,
+        isPaid: updatedBooking.is_paid,
+        paidSum: updatedBooking.paid_sum,
+        roomName: updatedBooking.room.name,
+      },
+    });
+  } catch (err) {
+    console.error('Ошибка при запуске бронирования:', err);
+    return res.status(500).json({ message: 'Не удалось запустить бронирование' });
+  }
+};
+
+const completeBooking = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { userId } = req.user;
+
+    const booking = await prisma.booking.findUnique({
+      where: { booking_id: Number(bookingId) },
+      include: { room: { include: { branch_office: true } } },
+    });
+
+    if (!booking) return res.status(404).json({ message: 'Бронирование не найдено' });
+    if (booking.status_id !== 7)
+      return res.status(400).json({ message: 'Можно завершить только активный сеанс' });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { booking_id: Number(bookingId) },
+        data: { status_id: 3 },
+      });
+
+      // Базовое XP — работает для всех способов оплаты
+      await awardBaseXp(tx, booking.user_id, Number(bookingId));
+
+      // Доп. активности
+      await checkActivities(tx, booking.user_id, {
+        ...booking,
+        branch_id: booking.room.branch_id,
+      });
+
+      // Лог
+      const shift = await tx.work_shift.findFirst({
+        where: { staff_id: userId, closed_at: null },
+      });
+
+      if (shift) {
+        await tx.admin_log.create({
+          data: {
+            admin_id: userId,
+            target_user_id: booking.user_id,
+            action_type: 'COMPLETE_BOOKING',
+            shift_id: shift.shift_id,
+            created_at: new Date(Date.now() + 3 * 60 * 60 * 1000),
+          },
+        });
+      }
+    });
+
+    return res.status(200).json({ message: 'Сеанс успешно завершён' });
+  } catch (err) {
+    console.error('Ошибка при завершении сеанса:', err);
+    return res.status(500).json({ message: 'Не удалось завершить сеанс' });
+  }
+};
+
 export default {
   createBookingDeposit,
   createBookingExternal,
@@ -487,4 +610,6 @@ export default {
   getBookingStatus,
   getUserBookings,
   getTodayBookings,
+  startBooking,
+  completeBooking,
 };

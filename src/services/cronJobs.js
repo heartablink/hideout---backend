@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import prisma from '../config/db.js';
+import { awardBaseXp, checkActivities } from './loyaltyService.js';
 
 export const initCronJobs = () => {
   cron.schedule('*/10 * * * *', async () => {
@@ -15,6 +16,50 @@ export const initCronJobs = () => {
       },
     });
     console.log('[CRON] Проверка просроченных броней завершена');
+  });
+
+  // Каждую минуту проверяем бронирования со статусом "Выполняется"
+  cron.schedule('* * * * *', async () => {
+    try {
+      const nowMoscow = new Date(Date.now() + 15 * 60 * 60 * 1000);
+
+      const overdueBookings = await prisma.booking.findMany({
+        where: {
+          status_id: 7, // Выполняется
+          time_end: {
+            lte: new Date(nowMoscow.getTime() - 15 * 60 * 1000),
+          },
+        },
+        include: {
+          room: { include: { branch_office: true } },
+        },
+      });
+
+      if (overdueBookings.length === 0) return;
+
+      for (const booking of overdueBookings) {
+        await prisma.$transaction(async (tx) => {
+          // 1. Завершаем бронь
+          await tx.booking.update({
+            where: { booking_id: booking.booking_id },
+            data: { status_id: 4 },
+          });
+
+          // 2. Базовое начисление XP за бронь (для всех способов оплаты)
+          await awardBaseXp(tx, booking.user_id, booking.booking_id);
+
+          // 3. Проверка доп. активностей (ранняя пташка, безлимит и т.д.)
+          await checkActivities(tx, booking.user_id, {
+            ...booking,
+            branch_id: booking.room.branch_id,
+          });
+        });
+
+        console.log(`[CRON] Бронь #${booking.booking_id} завершена, XP начислен`);
+      }
+    } catch (err) {
+      console.error('[CRON] Ошибка автозавершения:', err);
+    }
   });
 
   // // Задача запускается каждую минуту

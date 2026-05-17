@@ -19,7 +19,7 @@ model admin_log {
   log_id                              Int        @id @default(autoincrement())
   admin_id                            Int
   target_user_id                      Int
-  action_type                         Int
+  action_type                         String     @db.VarChar(50)
   created_at                          DateTime   @default(now()) @db.Timestamp(6)
   shift_id                            Int
   user_admin_log_admin_idTouser       user       @relation("admin_log_admin_idTouser", fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)

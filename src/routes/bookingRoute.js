@@ -6,23 +6,11 @@ import checkRole from '../middleware/checkRole.js';
 
 const router = new Router();
 
-router.post(
-  '/bookings/create-deposit', //путь
-  checkAuth,
-  bookingController.createBookingDeposit,
-);
+router.post('/bookings/create-deposit', checkAuth, bookingController.createBookingDeposit);
 
-router.post(
-  '/bookings/create-external', //путь
-  checkAuth,
-  bookingController.createBookingExternal,
-);
+router.post('/bookings/create-external', checkAuth, bookingController.createBookingExternal);
 
-router.post(
-  '/bookings/create-cash', //путь
-  checkAuth,
-  bookingController.createBookingCash,
-);
+router.post('/bookings/create-cash', checkAuth, bookingController.createBookingCash);
 
 router.post('/payments/webhook', bookingController.handleYookassaWebhook);
 
@@ -35,6 +23,20 @@ router.get(
   checkAuth,
   checkRole('Администратор', 'Менеджер'),
   bookingController.getTodayBookings,
+);
+
+router.post(
+  '/bookings/:bookingId/start',
+  checkAuth,
+  checkRole('Администратор', 'Менеджер'),
+  bookingController.startBooking,
+);
+
+router.post(
+  '/bookings/:bookingId/complete',
+  checkAuth,
+  checkRole('Администратор', 'Менеджер'),
+  bookingController.completeBooking,
 );
 
 export default router;
