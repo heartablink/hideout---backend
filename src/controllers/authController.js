@@ -82,10 +82,17 @@ const authorization = async (req, res) => {
     if (!isValidPass) {
       return res.status(400).json({ message: 'неправльный телефон или пароль' });
     }
+    const role = await prisma.permission.findFirst({
+      where: { user_id: user.user_id },
+      include: { role: true },
+    });
+
+    console.log('роль', role.role.name);
     //создаем токен с зашифрованными данными
     const token = jwt.sign(
       {
         id: user.user_id,
+        role: role.role?.name_role,
       },
       'secret123',
       {

@@ -22,7 +22,6 @@ const getActiveRooms = async (req, res) => {
       };
     }
 
-    filters.is_active = true;
     filters.is_deleted = false;
     // Логика сортировки
     let orderBy = { room_id: 'asc' }; // По умолчанию по ID
@@ -125,7 +124,9 @@ const getSlots = async (req, res) => {
           lte: endDate,
         },
         status_booking: {
-          name: { in: ['Оплачено', 'Ожидает оплаты', 'Завершено'] },
+          is: {
+            name: { in: ['Оплачено', 'Ожидает оплаты (наличные)', 'Ожидает оплаты (онлайн)'] },
+          },
         },
       },
     });
@@ -139,34 +140,52 @@ const getSlots = async (req, res) => {
       const dayKey = format(currentDay, 'yyyy-MM-dd');
       const dailySlots = [];
 
-      // Фильтруем брони только для текущего дня в цикле
-      const takenSlotsForDay = bookings
-        .filter((b) => format(new Date(b.booking_date), 'yyyy-MM-dd') === dayKey)
-        .map((b) => {
-          // Используем метод, который игнорирует локальный часовой пояс
-          const date = new Date(b.time_begin);
+      // Фильтруем брони для текущего дня
+      const bookingsForDay = bookings.filter((b) => {
+        const d = new Date(b.booking_date);
+        const bookingDayKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        return bookingDayKey === dayKey;
+      });
 
-          // Вытаскиваем часы именно в формате UTC
-          const hours = date.getUTCHours().toString().padStart(2, '0');
-          return `${hours}:00`;
+      bookingsForDay.forEach((b) => {
+        console.log('Бронь:', {
+          booking_date: b.booking_date,
+          time_begin: b.time_begin,
+          time_end: b.time_end,
         });
+      });
 
       // 4. ЦИКЛ ПО ЧАСАМ
       for (let hour = 10; hour <= 23; hour++) {
         const timeString = `${hour.toString().padStart(2, '0')}:00`;
         const slotDateTime = new Date(currentDay);
         slotDateTime.setHours(hour, 0, 0, 0);
+        const slotEnd = new Date(slotDateTime);
+        slotEnd.setHours(hour + 1); // конец слота — следующий час
 
         const isUnderMaintenance = room.room_maintenance.some(
           (m) => slotDateTime >= new Date(m.start_at) && slotDateTime < new Date(m.end_at),
         );
 
-        const isBooked = takenSlotsForDay.includes(timeString);
+        // ✅ Проверяем пересечение слота [hour, hour+1) с бронью [time_begin, time_end)
+        const isBooked = bookingsForDay.some((b) => {
+          const bookingStartHour = new Date(b.time_begin).getUTCHours();
+          const bookingEndHour = new Date(b.time_end).getUTCHours();
+          return hour < bookingEndHour && hour + 1 > bookingStartHour;
+          // 👇 ДОБАВЬ ЭТО
+          console.log(`Слот ${timeString}:`, {
+            slotDateTime: slotDateTime.toISOString(),
+            slotEnd: slotEnd.toISOString(),
+            bookingStart: bookingStart.toISOString(),
+            bookingEnd: bookingEnd.toISOString(),
+            пересечение: slotDateTime < bookingEnd && slotEnd > bookingStart,
+          });
+        });
         const isPast = isAfter(now, slotDateTime);
 
         dailySlots.push({
           time: timeString,
-          isAvailable: room.is_active && !isUnderMaintenance && !isBooked && !isPast,
+          isAvailable: !isUnderMaintenance && !isBooked && !isPast,
           reason: isUnderMaintenance
             ? 'Maintenance'
             : isBooked

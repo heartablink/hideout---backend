@@ -39,6 +39,8 @@ model booking {
   created_at          DateTime              @default(now()) @db.Timestamp(6)
   paid_sum            Decimal?              @default(0.00) @db.Decimal(15, 2)
   is_paid             Boolean               @default(false)
+  payment_id          Int?                  @default(0)
+  discount_applied    Decimal?              @db.Decimal
   room                room                  @relation(fields: [room_id], references: [room_id], onDelete: NoAction, onUpdate: NoAction)
   status_booking      status_booking?       @relation(fields: [status_id], references: [status_id], onDelete: NoAction, onUpdate: NoAction)
   user                user                  @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
@@ -48,7 +50,6 @@ model booking {
 model branch_office {
   branch_id  Int          @id @default(autoincrement())
   address    String       @db.VarChar(255)
-  ip_address String       @db.VarChar(50)
   room       room[]
   staff      staff[]
   work_shift work_shift[]
@@ -71,6 +72,7 @@ model deposit_transaction {
   operation_type_id                       Int
   external_transaction_id                 String?        @db.VarChar(50)
   comment                                 String?
+  package_id                              Int            @default(0)
   user_deposit_transaction_admin_idTouser user           @relation("deposit_transaction_admin_idTouser", fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
   booking                                 booking?       @relation(fields: [booking_id], references: [booking_id], onDelete: NoAction, onUpdate: NoAction)
   type_operation                          type_operation @relation(fields: [operation_type_id], references: [operation_id], onDelete: NoAction, onUpdate: NoAction)
@@ -92,6 +94,8 @@ model loyalty_level {
   level_order Int
   discount    Decimal?  @db.Decimal(5, 2)
   min_xp      BigInt
+  max_xp      Int
+  photo       String?   @db.VarChar
   loyalty     loyalty[]
 }
 
@@ -105,14 +109,13 @@ model permission {
 }
 
 model price_history {
-  price_id  Int       @id @default(autoincrement())
+  record_id Int      @id @default(autoincrement())
   room_id   Int
-  price     Decimal   @db.Decimal(15, 2)
-  date_from DateTime  @default(now()) @db.Timestamp(6)
-  date_to   DateTime? @db.Timestamp(6)
+  price     Decimal  @db.Decimal(15, 2)
+  date_from DateTime @default(now()) @db.Timestamp(6)
   admin_id  Int
-  user      user      @relation(fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
-  room      room      @relation(fields: [room_id], references: [room_id], onDelete: NoAction, onUpdate: NoAction)
+  user      user     @relation(fields: [admin_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  room      room     @relation(fields: [room_id], references: [room_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model role {
@@ -122,7 +125,7 @@ model role {
 }
 
 model room {
-  room_id          Int                @id @default(autoincrement())
+  room_id          Int                @id
   category_id      Int
   branch_id        Int
   max_people       Int
@@ -130,14 +133,12 @@ model room {
   description      String?
   name             String             @db.VarChar(50)
   image            String?
-  is_active        Boolean
   is_deleted       Boolean
   booking          booking[]
   price_history    price_history[]
   branch_office    branch_office      @relation(fields: [branch_id], references: [branch_id], onDelete: NoAction, onUpdate: NoAction)
   category         category           @relation(fields: [category_id], references: [category_id], onDelete: NoAction, onUpdate: NoAction)
   room_maintenance room_maintenance[]
-  roomstatuslog    roomstatuslog[]
 }
 
 model staff {
@@ -172,7 +173,6 @@ model user {
   loyalty                                                loyalty?
   permission                                             permission[]
   price_history                                          price_history[]
-  roomstatuslog                                          roomstatuslog[]
   staff                                                  staff?
   user_info                                              user_info?
   work_shift                                             work_shift[]
@@ -205,6 +205,7 @@ model xp_log {
   xp_gain          Int
   created_at       DateTime       @default(now()) @db.Timestamp(6)
   activity_type_id Int?
+  booking_id       Int
   activity_type    activity_type? @relation(fields: [activity_type_id], references: [activity_id], onDelete: NoAction, onUpdate: NoAction)
   user             user           @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
 }
@@ -220,21 +221,6 @@ model game {
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
-model roomstatuslog {
-  log_id     Int       @id @default(autoincrement())
-  room_id    Int
-  action     String    @db.VarChar(50)
-  reason     String?
-  changed_by Int
-  created_at DateTime? @default(now()) @db.Timestamptz(6)
-  room       room      @relation(fields: [room_id], references: [room_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_room")
-  user       user      @relation(fields: [changed_by], references: [user_id], onDelete: NoAction, onUpdate: NoAction, map: "fk_user")
-
-  @@index([created_at], map: "idx_room_status_created_at")
-  @@index([room_id], map: "idx_room_status_room_id")
-}
-
-/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model room_maintenance {
   maintenance_id Int       @id @default(autoincrement())
   room_id        Int
@@ -242,6 +228,7 @@ model room_maintenance {
   end_at         DateTime  @db.Timestamptz(6)
   reason         String?
   created_at     DateTime? @default(now()) @db.Timestamptz(6)
+  created_by     Int
   room           room      @relation(fields: [room_id], references: [room_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_room_maintenance")
 
   @@index([start_at, end_at], map: "idx_maintenance_dates")

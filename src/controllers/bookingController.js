@@ -208,7 +208,8 @@ const createBookingExternal = async (req, res) => {
           confirmation: {
             type: 'redirect',
             // ВАЖНО: прокидываем ID брони в URL возврата
-            return_url: `http://localhost:3000/booking/success?bookingId=${booking.booking_id}`,
+            // return_url: `http://localhost:3000/booking/success?bookingId=${booking.booking_id}`,
+            return_url: `http://localhost:3000/profile`,
           },
           description: `Оплата бронирования №${booking.booking_id} (Комната: ${roomId})`,
           metadata: {
@@ -230,6 +231,83 @@ const createBookingExternal = async (req, res) => {
     res.status(201).json(result);
   } catch (err) {
     console.error('Ошибка внешней оплаты:', err);
+    res.status(400).json({ message: err.message });
+  }
+};
+
+const createBookingCash = async (req, res) => {
+  try {
+    // 1. Проверяем, что middleware сработал
+    if (!req.user) {
+      return res.status(401).json({ message: 'Пользователь не авторизован' });
+    }
+
+    const { userId } = req.user; // Из middleware
+    const { roomId, date, slots } = req.body;
+
+    const user = await prisma.permission.findFirst({ where: { user_id: userId } });
+
+    if (!user) {
+      return res.status(404).json({ message: 'Пользователь не найден' });
+    }
+    if (user.role_id !== 3) {
+      return res.status(403).json({ message: 'Только клиенты могут бронировать' });
+    }
+
+    // Подготовка времени
+    //используем Z для корректности UTC
+    const sortedSlots = slots.sort();
+    const timeBegin = new Date(`${date}T${sortedSlots[0]}:00Z`);
+    const timeEnd = new Date(`${date}T${sortedSlots[sortedSlots.length - 1]}:00Z`);
+    timeEnd.setUTCHours(timeEnd.getUTCHours() + 1);
+
+    //Запускаем транзакцию для проверки доступности и создания "черновика" брони
+    const result = await prisma.$transaction(async (tx) => {
+      // Проверка на двойное бронирование
+      const existing = await tx.booking.findFirst({
+        where: {
+          room_id: Number(roomId),
+          booking_date: new Date(date),
+          status_booking: { name: { in: ['Оплачено', 'Ожидает оплаты'] } },
+          OR: [{ time_begin: { lt: timeEnd, gte: timeBegin } }],
+        },
+      });
+
+      if (existing) throw new Error('Один из выбранных слотов уже занят');
+
+      const room = await tx.room.findFirst({
+        where: { room_id: Number(roomId) },
+        include: { branch_office: true },
+      });
+
+      // РАСЧЕТ СТОИМОСТИ
+      const totalPrice = Number(room.price) * slots.length;
+
+      // Создаем бронирование со статусом "Ожидает оплаты" (status_id: 2 или какой у тебя по базе)
+      // ВАЖНО: is_paid: false
+      const booking = await tx.booking.create({
+        data: {
+          user_id: userId,
+          room_id: Number(roomId),
+          booking_date: new Date(date),
+          time_begin: timeBegin,
+          time_end: timeEnd,
+          total_cost: totalPrice,
+          paid_sum: 0,
+          is_paid: false,
+          status_id: 6, //  6 - это "Ожидает оплаты (наличными)
+          created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
+        },
+      });
+
+      return {
+        bookingId: booking.booking_id,
+      };
+    });
+
+    res.status(201).json(result);
+  } catch (err) {
+    console.error('Ошибка создания броинрвоания:', err);
     res.status(400).json({ message: err.message });
   }
 };
@@ -287,9 +365,126 @@ const getBookingStatus = async (req, res) => {
   res.json({ is_paid: booking.is_paid });
 };
 
+const getUserBookings = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Пользователь не авторизован' });
+    }
+
+    const { userId } = req.user; // Из middleware
+
+    const bookings = await prisma.booking.findMany({
+      where: { user_id: userId },
+      orderBy: { created_at: 'desc' }, // или booking_date + time_begin
+      select: {
+        booking_id: true,
+        booking_date: true,
+        time_begin: true,
+        time_end: true,
+        total_cost: true,
+        is_paid: true,
+        room: {
+          select: {
+            name: true,
+            room_id: true, // название комнаты
+          },
+        },
+        status_booking: {
+          select: {
+            name: true, // статус (Подтверждено, Отменено и т.д.)
+          },
+        },
+      },
+    });
+
+    // Форматируем ответ для удобства на фронте
+    const result = bookings.map((b) => ({
+      id: b.booking_id,
+      room_id: b.room.room_id,
+      date: b.booking_date,
+      timeBegin: b.time_begin.toISOString().slice(11, 16),
+      timeEnd: b.time_end.toISOString().slice(11, 16),
+      totalCost: b.total_cost,
+      isPaid: b.is_paid,
+      roomName: b.room?.name || '—',
+      status: b.status_booking?.name || '—',
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error('Ошибка получения истории бронирований:', err);
+    res.status(500).json({ message: 'Не удалось получить историю бронирований' });
+  }
+};
+
+const getTodayBookings = async (req, res) => {
+  try {
+    // выбираем только сегодняшние бронирования
+    // начало и конец сегодняшнего дня
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    //определяем филиал сотрудника
+    const staffRecord = await prisma.staff.findUnique({
+      where: { user_id: req.user.userId },
+    });
+
+    const whereCondition = {
+      booking_date: { gte: todayStart, lte: todayEnd },
+    };
+
+    if (staffRecord) {
+      whereCondition.room = { branch_id: staffRecord.branch_id };
+    }
+
+    const bookings = await prisma.booking.findMany({
+      where: whereCondition,
+      orderBy: [{ booking_date: 'asc' }, { time_begin: 'asc' }],
+      include: {
+        room: {
+          select: { name: true, branch_office: { select: { address: true } } },
+        },
+        user: {
+          select: { phone: true, user_info: { select: { name: true } } },
+        },
+        status_booking: {
+          select: { name: true },
+        },
+      },
+    });
+
+    // Форматируем для фронта
+    const result = bookings.map((b) => ({
+      id: b.booking_id,
+      date: b.booking_date,
+      timeBegin: b.time_begin.toISOString().slice(11, 16),
+      timeEnd: b.time_end.toISOString().slice(11, 16),
+      totalCost: b.total_cost,
+      isPaid: b.is_paid,
+      roomId: b.room_id,
+      roomName: b.room?.name || '—',
+      branchAddress: b.room?.branch_office?.address || '—',
+      clientName: b.user?.user_info?.name || '—',
+      clientPhone: b.user?.phone || '—',
+      status: b.status_booking?.name || '—',
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error('Ошибка получения сегодняшних бронирований:', err);
+    res.status(500).json({ message: 'Не удалось получить бронирования' });
+  }
+};
+
 export default {
   createBookingDeposit,
   createBookingExternal,
+  createBookingCash,
   handleYookassaWebhook,
   getBookingStatus,
+  getUserBookings,
+  getTodayBookings,
 };

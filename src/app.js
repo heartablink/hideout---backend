@@ -8,6 +8,7 @@ import categoryRouter from './routes/categoryRoute.js';
 import branchRouter from './routes/branchRoute.js';
 import bookingRouter from './routes/bookingRoute.js';
 import userRoute from './routes/userRoute.js';
+import loyaltyRoute from './routes/loyaltyRoute.js';
 
 //задачи крон
 import { initCronJobs } from './services/cronJobs.js';
@@ -38,6 +39,7 @@ app.use(
   branchRouter,
   bookingRouter,
   userRoute,
+  loyaltyRoute,
 );
 app.use('/uploads', express.static('uploads'));
 

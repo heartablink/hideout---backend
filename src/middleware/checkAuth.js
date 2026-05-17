@@ -10,7 +10,8 @@ const checkAuth = (req, res, next) => {
     try {
       const decoded = jwt.verify(token, 'secret123');
       console.log('декодед: ', decoded);
-      req.user = { userId: decoded.id }; // Создаем объект user и кладем туда userId
+      console.log(token);
+      req.user = { userId: decoded.id, userRole: decoded.role }; // Создаем объект user и кладем туда userId
       next();
     } catch (e) {
       return res.status(403).json({
