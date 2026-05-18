@@ -602,6 +602,98 @@ const completeBooking = async (req, res) => {
   }
 };
 
+const cancelBooking = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { userId } = req.user;
+
+    const booking = await prisma.booking.findFirst({
+      where: {
+        booking_id: Number(bookingId),
+      },
+    });
+
+    if (!booking) {
+      return res.status(500).json({ message: 'Бронирование не найдено' });
+    }
+
+    if (booking.user_id != userId) {
+      return res
+        .status(500)
+        .json({ message: 'Отменить бронирование может только клиент, который ее создал. ' });
+    }
+
+    // Проверяем, можно ли отменить (не завершено, не отменено ранее)
+    if (booking.status_id === 4 || booking.status_id === 3) {
+      return res.status(400).json({
+        message: 'Это бронирование уже нельзя отменить',
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { booking_id: Number(bookingId) },
+        data: { status_id: 4 },
+      });
+
+      // 2. Если бронь была оплачена депозитом – возвращаем деньги
+      if (booking.is_paid && booking.paid_sum > 0) {
+        // Находим транзакцию списания, связанную с этим бронированием
+        const debitTx = await tx.deposit_transaction.findFirst({
+          where: {
+            booking_id: Number(bookingId),
+            operation_type_id: 1, // id типа «списание за бронь»
+          },
+        });
+        if (debitTx) {
+          // 3. Создаём транзакцию возврата
+          await tx.deposit_transaction.create({
+            data: {
+              user_id: userId,
+              amount: booking.paid_sum,
+              current_balance: {
+                increment: booking.paid_sum,
+              },
+              booking_id: Number(bookingId),
+              operation_type_id: 3, // id типа «возврат на депозит»
+              comment: `Возврат за отмену бронирования #${bookingId}`,
+            },
+          });
+          const deletedXpLogs = await tx.xp_log.findMany({
+            where: { booking_id: Number(bookingId) },
+            select: { xp_gain: true },
+          });
+
+          if (deletedXpLogs.length > 0) {
+            // Удаляем записи
+            await tx.xp_log.deleteMany({
+              where: { booking_id: Number(bookingId) },
+            });
+
+            // Суммируем удалённый XP
+            const totalXpRemoved = deletedXpLogs.reduce((sum, log) => sum + log.xp_gain, 0);
+
+            // Уменьшаем баланс XP в loyalty
+            await tx.loyalty.update({
+              where: { user_id: userId },
+              data: {
+                xp_amount: {
+                  decrement: totalXpRemoved,
+                },
+              },
+            });
+          }
+        }
+      }
+    });
+
+    return res.status(200).json({ message: 'Бронирование успешно отменено' });
+  } catch (err) {
+    console.error('Ошибка при отмене бронирования:', err);
+    return res.status(500).json({ message: 'Не удалось отмениь бронирование' });
+  }
+};
+
 export default {
   createBookingDeposit,
   createBookingExternal,
@@ -612,4 +704,5 @@ export default {
   getTodayBookings,
   startBooking,
   completeBooking,
+  cancelBooking,
 };

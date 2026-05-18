@@ -28,21 +28,23 @@ const getMe = async (req, res) => {
       where: {
         user_id: userId,
         is_paid: true,
+        status_id: 3,
       },
     });
 
     // 2. Считаем общее количество миллисекунд
+    // Считаем общее количество миллисекунд
     const totalMs = bookings.reduce((acc, booking) => {
-      // Создаем объекты даты для корректного вычисления разницы
-      // Так как у тебя time_begin и time_end — это тип Time,
-      // мы добавим их к любой дате (например, сегодня), чтобы вычесть одно из другого
-      const start = new Date(`1970-01-01T${booking.time_begin}`);
-      const end = new Date(`${booking.time_end}`);
+      // time_begin и time_end уже объекты Date — используем напрямую
+      const start = new Date(booking.time_begin);
+      const end = new Date(booking.time_end);
 
-      return acc + (end - start);
+      const diff = end - start;
+      // Защита от некорректных данных (end раньше start)
+      return acc + (diff > 0 ? diff : 0);
     }, 0);
 
-    // 3. Переводим миллисекунды в часы
+    // Переводим миллисекунды в часы
     const totalHours = Math.floor(totalMs / (1000 * 60 * 60));
 
     // Безопасный сбор данных

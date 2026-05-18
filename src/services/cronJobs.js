@@ -18,6 +18,39 @@ export const initCronJobs = () => {
     console.log('[CRON] Проверка просроченных броней завершена');
   });
 
+  //проверка броней на которые не пришел клиент
+  cron.schedule('* * * * *', async () => {
+    const nowMoscow = new Date(Date.now() + 15 * 60 * 60 * 1000);
+
+    const notStartBookings = await prisma.booking.findMany({
+      where: {
+        status_id: { in: [1, 2, 6] }, // Выполняется
+        time_begin: {
+          lte: new Date(nowMoscow.getTime() - 15 * 60 * 1000),
+        },
+      },
+      include: {
+        room: { include: { branch_office: true } },
+      },
+    });
+
+    if (notStartBookings.length === 0) return;
+
+    for (const booking of notStartBookings) {
+      await prisma.$transaction(async (tx) => {
+        // 1. Завершаем бронь
+        await tx.booking.update({
+          where: { booking_id: booking.booking_id },
+          data: { status_id: 8 },
+        });
+      });
+
+      console.log(`[CRON] У брони #${booking.booking_id} установлен статус неявки клиента`);
+    }
+
+    console.log('[CRON] Проверка неначатых броней завершена');
+  });
+
   // Каждую минуту проверяем бронирования со статусом "Выполняется"
   cron.schedule('* * * * *', async () => {
     try {

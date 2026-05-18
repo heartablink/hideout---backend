@@ -39,4 +39,6 @@ router.post(
   bookingController.completeBooking,
 );
 
+router.post('/bookings/:bookingId/cancel', checkAuth, bookingController.cancelBooking);
+
 export default router;
