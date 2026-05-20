@@ -16,12 +16,11 @@ const checkout = new YooCheckout({
 
 const createBookingDeposit = async (req, res) => {
   try {
-    // 1. Проверяем, что middleware сработал
     if (!req.user) {
       return res.status(401).json({ message: 'Пользователь не авторизован' });
     }
 
-    const { userId } = req.user; // Из middleware
+    const { userId } = req.user;
     const { roomId, date, slots } = req.body;
 
     const user = await prisma.permission.findFirst({ where: { user_id: userId } });
@@ -33,14 +32,13 @@ const createBookingDeposit = async (req, res) => {
       return res.status(403).json({ message: 'Только клиенты могут бронировать' });
     }
 
-    // Подготовка времени
     const sortedSlots = slots.sort();
     const timeBegin = new Date(`${date}T${sortedSlots[0]}:00Z`);
     const timeEnd = new Date(`${date}T${sortedSlots[sortedSlots.length - 1]}:00Z`);
     timeEnd.setUTCHours(timeEnd.getUTCHours() + 1);
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Проверка на двойное бронирование
+      // Проверка на двойное бронирование
       const existing = await tx.booking.findFirst({
         where: {
           room_id: Number(roomId),
@@ -52,32 +50,38 @@ const createBookingDeposit = async (req, res) => {
 
       if (existing) throw new Error('Один из выбранных слотов уже занят');
 
-      // 2. Получаем данные комнаты и лояльности юзера (с уровнем)
+      // Данные комнаты и уровень лояльности
       const room = await tx.room.findFirst({
         where: { room_id: Number(roomId) },
-        include: { branch_office: true },
       });
 
       const userLoyalty = await tx.loyalty.findUnique({
         where: { user_id: userId },
-        include: { loyalty_level: true }, // Обязательно подтягиваем уровень для скидки
+        include: { loyalty_level: true },
       });
 
-      // 3. РАСЧЕТ СКИДКИ
+      // Актуальный баланс из последней транзакции
+      const lastTx = await tx.deposit_transaction.findFirst({
+        where: { user_id: userId },
+        orderBy: { created_at: 'desc' },
+        select: { current_balance: true },
+      });
+
+      const currentBalance = lastTx ? Number(lastTx.current_balance) : 0;
+
+      // Расчёт стоимости со скидкой
       const basePrice = Number(room.price) * slots.length;
       const discountPercent = Number(userLoyalty.loyalty_level.discount) || 0;
-
-      // Итоговая сумма к списанию
       const totalPrice = basePrice * (1 - discountPercent);
 
-      // 4. Проверка баланса
-      if (Number(userLoyalty.current_balance) < totalPrice) {
+      // Проверка баланса
+      if (currentBalance < totalPrice) {
         throw new Error(
-          `Недостаточно средств. Нужно ${totalPrice}, на счету ${userLoyalty.current_balance}`,
+          `Недостаточно средств. Нужно ${totalPrice} ₽, на счету ${currentBalance} ₽`,
         );
       }
 
-      // 5. Создание бронирования
+      // Создание бронирования
       const booking = await tx.booking.create({
         data: {
           user_id: userId,
@@ -85,30 +89,28 @@ const createBookingDeposit = async (req, res) => {
           booking_date: new Date(date),
           time_begin: timeBegin,
           time_end: timeEnd,
-          total_cost: basePrice, // Исходная цена
-          paid_sum: totalPrice, // Сколько реально заплатил со скидкой
+          total_cost: basePrice,
+          paid_sum: totalPrice,
           is_paid: true,
           status_id: 1,
-          created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
+          discount_applied: discountPercent,
+          created_at: new Date(Date.now() + 3 * 60 * 60 * 1000),
         },
       });
 
-      // 6. Списание и запись транзакции
-      const updatedLoyalty = await tx.loyalty.update({
-        where: { user_id: userId },
-        data: { current_balance: { decrement: totalPrice } },
-      });
+      const newBalance = currentBalance - totalPrice;
 
+      // Транзакция списания
       await tx.deposit_transaction.create({
         data: {
           user_id: userId,
           amount: -totalPrice,
-          current_balance: updatedLoyalty.current_balance,
+          current_balance: newBalance,
           booking_id: booking.booking_id,
           operation_type_id: 2,
           admin_id: userId,
-          created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
-          comment: 'Оплата бронирования со игрового счета',
+          created_at: new Date(Date.now() + 3 * 60 * 60 * 1000),
+          comment: 'Оплата бронирования с игрового счёта',
         },
       });
 
@@ -116,6 +118,7 @@ const createBookingDeposit = async (req, res) => {
         booking,
         discountApplied: `${discountPercent * 100}%`,
         saved: basePrice - totalPrice,
+        newBalance,
       };
     });
 
@@ -124,7 +127,6 @@ const createBookingDeposit = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
-
 const createBookingExternal = async (req, res) => {
   try {
     // 1. Проверяем, что middleware сработал
@@ -515,7 +517,7 @@ const startBooking = async (req, res) => {
     // Логируем действие администратора
     const staffShift = await prisma.work_shift.findFirst({
       where: {
-        user_id: userId,
+        staff_id: userId,
         closed_at: null, // открытая смена
       },
     });

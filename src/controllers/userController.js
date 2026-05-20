@@ -10,7 +10,7 @@ const getMe = async (req, res) => {
         phone: true,
 
         loyalty: {
-          select: { loyalty_level_id: true, current_balance: true, xp_amount: true },
+          select: { loyalty_level_id: true, xp_amount: true },
         },
         user_info: true,
       },
@@ -22,6 +22,13 @@ const getMe = async (req, res) => {
 
     const lvlData = await prisma.loyalty_level.findFirst({
       where: { level_id: user.loyalty?.loyalty_level_id },
+    });
+
+    // Берём последнюю транзакцию пользователя — в ней актуальный баланс
+    const lastTransaction = await prisma.deposit_transaction.findFirst({
+      where: { user_id: userId },
+      orderBy: { created_at: 'desc' },
+      select: { current_balance: true },
     });
 
     const bookings = await prisma.booking.findMany({
@@ -51,11 +58,9 @@ const getMe = async (req, res) => {
     const userData = {
       phone: user.phone,
       user_info: user.user_info,
-      // Если loyalty есть — берем ID, если нет — ставим null или 0
       loyalty_level: user.loyalty?.loyalty_level_id || null,
-      // Если loyalty есть — берем баланс, если нет — ставим 0
-      current_balance: user.loyalty?.current_balance ? Number(user.loyalty.current_balance) : 0,
-      xp_amount: user.loyalty?.xp_amount ? user.loyalty.xp_amount : 0,
+      current_balance: lastTransaction ? Number(lastTransaction.current_balance) : 0,
+      xp_amount: user.loyalty?.xp_amount ?? 0,
       discount: lvlData.discount,
       totalHours,
       level_name: lvlData.name,
@@ -73,4 +78,23 @@ const getMe = async (req, res) => {
   }
 };
 
-export default { getMe };
+const getXpLogs = async (req, res) => {
+  const { userId } = req.user;
+  const logs = await prisma.xp_log.findMany({
+    where: { user_id: userId },
+    include: { activity_type: { select: { name: true } } },
+    orderBy: { created_at: 'desc' },
+  });
+  res.json(logs.map((l) => ({ ...l, name: l.activity_type?.name })));
+};
+
+const getTransactions = async (req, res) => {
+  const { userId } = req.user;
+  const data = await prisma.deposit_transaction.findMany({
+    where: { user_id: userId },
+    orderBy: { created_at: 'desc' },
+  });
+  res.json(data);
+};
+
+export default { getMe, getXpLogs, getTransactions };

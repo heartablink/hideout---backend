@@ -33,7 +33,6 @@ const registration = async (req, res) => {
           create: {
             loyalty_level_id: 1,
             xp_amount: 0,
-            current_balance: 0.0,
           },
         },
         permission: {

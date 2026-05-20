@@ -7,4 +7,8 @@ const router = new Router();
 
 router.get('/me', checkAuth, userController.getMe);
 
+router.get('/me/xp-logs', checkAuth, userController.getXpLogs);
+
+router.get('/me/transactions', checkAuth, userController.getTransactions);
+
 export default router;
