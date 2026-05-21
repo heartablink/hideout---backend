@@ -156,7 +156,7 @@ const getSlots = async (req, res) => {
       });
 
       // 4. ЦИКЛ ПО ЧАСАМ
-      for (let hour = 10; hour <= 23; hour++) {
+      for (let hour = 10; hour <= 22; hour++) {
         const timeString = `${hour.toString().padStart(2, '0')}:00`;
         const slotDateTime = new Date(currentDay);
         slotDateTime.setHours(hour, 0, 0, 0);

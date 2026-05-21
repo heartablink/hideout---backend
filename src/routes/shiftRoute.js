@@ -9,19 +9,19 @@ const router = new Router();
 router.post(
   '/shift/open',
   checkAuth,
-  checkRole('Администратор', 'Менеджер'),
+  checkRole('Администратор', 'Управляющий'),
   shiftController.openShift,
 );
 router.post(
   '/shift/close',
   checkAuth,
-  checkRole('Администратор', 'Менеджер'),
+  checkRole('Администратор', 'Управляющий'),
   shiftController.closeShift,
 );
 router.get(
   '/shift/status',
   checkAuth,
-  checkRole('Администратор', 'Менеджер'),
+  checkRole('Администратор', 'Управляющий'),
   shiftController.getShiftStatus,
 );
 

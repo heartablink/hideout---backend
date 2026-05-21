@@ -12,6 +12,7 @@ import loyaltyRoute from './routes/loyaltyRoute.js';
 import shiftRoute from './routes/shiftRoute.js';
 import packageRoute from './routes/packageRoute.js';
 import managerRoute from './routes/managerRoute.js';
+import staffRoute from './routes/staffRoute.js';
 
 //задачи крон
 import { initCronJobs } from './services/cronJobs.js';
@@ -46,6 +47,7 @@ app.use(
   shiftRoute,
   packageRoute,
   managerRoute,
+  staffRoute,
 );
 app.use('/uploads', express.static('uploads'));
 

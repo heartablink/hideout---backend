@@ -132,4 +132,32 @@ export const initCronJobs = () => {
       console.error('[CRON] Ошибка автозавершения:', err);
     }
   });
+
+  // ─────────────────────────────────────────────
+  // 4. Автозакрытие смен в 23:45
+  //    Запуск: каждый день в 23:45
+  // ─────────────────────────────────────────────
+  cron.schedule('45 23 * * *', async () => {
+    try {
+      const now = new Date(Date.now() + 3 * 60 * 60 * 1000); // MSK
+
+      const openShifts = await prisma.work_shift.findMany({
+        where: { closed_at: null },
+      });
+
+      if (openShifts.length === 0) return;
+
+      for (const shift of openShifts) {
+        await prisma.work_shift.update({
+          where: { shift_id: shift.shift_id },
+          data: { closed_at: now },
+        });
+        console.log(`[CRON] Автозакрытие смены #${shift.shift_id} сотрудника #${shift.staff_id}`);
+      }
+
+      console.log(`[CRON] Автозакрыто смен: ${openShifts.length}`);
+    } catch (err) {
+      console.error('[CRON] Ошибка автозакрытия смен:', err);
+    }
+  });
 };
