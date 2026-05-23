@@ -2,6 +2,7 @@ import { Router } from 'express';
 import checkAuth from '../middleware/checkAuth.js';
 import checkRole from '../middleware/checkRole.js';
 import packageController from '../controllers/packageController.js';
+import checkActiveShift from '../middleware/checkActiveShift.js';
 
 const router = new Router();
 
@@ -10,6 +11,7 @@ router.get(
   '/packages/search-client',
   checkAuth,
   checkRole('Администратор', 'Менеджер'),
+  checkActiveShift,
   packageController.searchClient,
 );
 

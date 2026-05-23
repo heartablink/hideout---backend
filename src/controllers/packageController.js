@@ -23,6 +23,7 @@ const searchClient = async (req, res) => {
             loyalty_level: { select: { name: true } },
           },
         },
+        permission: { select: { role_id: true } },
       },
     });
 
@@ -37,10 +38,16 @@ const searchClient = async (req, res) => {
       select: { current_balance: true },
     });
 
+    const CLIENT_ROLE_ID = 3;
+    const roleIds = user.permission?.map((p) => p.role_id) || [];
+    const isClient = roleIds.includes(CLIENT_ROLE_ID);
+    const roleName = isClient ? 'клиент' : 'сотрудник';
+
     return res.json({
       userId: user.user_id,
       phone: user.phone,
       name: `${user.user_info?.name ?? ''} ${user.user_info?.surname ?? ''}`.trim(),
+      role: roleName,
       levelName: user.loyalty?.loyalty_level?.name ?? '—',
       xp: user.loyalty?.xp_amount ?? 0,
       balance: lastTx ? Number(lastTx.current_balance) : 0,

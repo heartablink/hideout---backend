@@ -13,6 +13,7 @@ import shiftRoute from './routes/shiftRoute.js';
 import packageRoute from './routes/packageRoute.js';
 import managerRoute from './routes/managerRoute.js';
 import staffRoute from './routes/staffRoute.js';
+import roomManagementRoute from './routes/roomManagementRoute.js';
 
 //задачи крон
 import { initCronJobs } from './services/cronJobs.js';
@@ -48,6 +49,7 @@ app.use(
   packageRoute,
   managerRoute,
   staffRoute,
+  roomManagementRoute,
 );
 app.use('/uploads', express.static('uploads'));
 

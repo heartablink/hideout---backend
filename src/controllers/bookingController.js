@@ -696,6 +696,102 @@ const cancelBooking = async (req, res) => {
   }
 };
 
+// Бронирование гостя (без учётки), создаётся администратором на месте
+const createGuestBooking = async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ message: 'Не авторизован' });
+
+    const { userId } = req.user;
+    const { roomId, date, slots, guestName, guestPhone, paymentMethod = 'cash' } = req.body;
+
+    if (!roomId || !date || !slots?.length) {
+      return res.status(400).json({ message: 'Укажите комнату, дату и временные слоты' });
+    }
+
+    const sortedSlots = [...slots].sort();
+    const timeBegin = new Date(`${date}T${sortedSlots[0]}:00Z`);
+    const timeEnd = new Date(`${date}T${sortedSlots[sortedSlots.length - 1]}:00Z`);
+    timeEnd.setUTCHours(timeEnd.getUTCHours() + 1);
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Проверяем что комната принадлежит филиалу администратора
+      const staffRecord = await tx.staff.findUnique({ where: { user_id: userId } });
+      const room = await tx.room.findFirst({
+        where: { room_id: Number(roomId), is_deleted: false },
+        include: { branch_office: true },
+      });
+
+      if (!room) throw new Error('Комната не найдена');
+      if (room.branch_id !== staffRecord.branch_id) {
+        throw new Error('Комната не принадлежит вашему филиалу');
+      }
+
+      // Проверка на пересечение с существующими бронями
+      const existing = await tx.booking.findFirst({
+        where: {
+          room_id: Number(roomId),
+          booking_date: new Date(date),
+          status_booking: {
+            name: { in: ['Оплачено', 'Ожидает оплаты (наличные)', 'Ожидает оплаты (онлайн)'] },
+          },
+          OR: [{ time_begin: { lt: timeEnd, gte: timeBegin } }],
+        },
+      });
+      if (existing) throw new Error('Один из выбранных слотов уже занят');
+
+      // Проверка на ремонт
+      const maintenance = await tx.room_maintenance.findFirst({
+        where: {
+          room_id: Number(roomId),
+          start_at: { lte: timeEnd },
+          end_at: { gte: timeBegin },
+        },
+      });
+      if (maintenance) throw new Error('Комната закрыта на обслуживание в выбранное время');
+
+      const totalCost = Number(room.price) * slots.length;
+
+      // status_id: 6 = "Ожидает оплаты (наличные)", 1 = "Оплачено"
+      const statusId = paymentMethod === 'paid' ? 1 : 6;
+      const isPaid = paymentMethod === 'paid';
+
+      const booking = await tx.booking.create({
+        data: {
+          user_id: userId, // временно — администратор как владелец брони гостя
+          room_id: Number(roomId),
+          booking_date: new Date(date),
+          time_begin: timeBegin,
+          time_end: timeEnd,
+          total_cost: totalCost,
+          paid_sum: isPaid ? totalCost : 0,
+          is_paid: isPaid,
+          status_id: statusId,
+          created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
+          discount_applied: 0,
+        },
+      });
+
+      // Лог действия администратора
+      await tx.admin_log.create({
+        data: {
+          admin_id: userId,
+          target_user_id: userId, // гость — нет user_id, пишем самого админа
+          action_type: 7, // тип: создание гостевой брони
+          shift_id: req.shift.shift_id,
+          created_at: new Date(new Date().getTime() + 3 * 60 * 60 * 1000),
+        },
+      });
+
+      return { booking, totalCost, guestName, guestPhone };
+    });
+
+    res.status(201).json(result);
+  } catch (err) {
+    console.error('Ошибка гостевого бронирования:', err);
+    res.status(400).json({ message: err.message });
+  }
+};
+
 export default {
   createBookingDeposit,
   createBookingExternal,
@@ -707,4 +803,5 @@ export default {
   startBooking,
   completeBooking,
   cancelBooking,
+  createGuestBooking,
 };

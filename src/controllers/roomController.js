@@ -208,8 +208,31 @@ const getSlots = async (req, res) => {
     res.status(500).json({ message: 'Ошибка сервера' });
   }
 };
+
+const getBranchRooms = async (req, res) => {
+  try {
+    const staffRecord = await prisma.staff.findUnique({
+      where: { user_id: req.user.userId },
+    });
+    if (!staffRecord) return res.status(403).json({ message: 'Сотрудник не найден' });
+
+    const rooms = await prisma.room.findMany({
+      where: { branch_id: staffRecord.branch_id, is_deleted: false },
+      include: { category: { select: { name: true } } },
+      orderBy: { name: 'asc' },
+    });
+
+    return res
+      .status(200)
+      .json(rooms.map(({ category, ...r }) => ({ ...r, category_name: category.name })));
+  } catch (err) {
+    return res.status(500).json({ message: 'Ошибка получения комнат', error: err.message });
+  }
+};
+
 export default {
   getActiveRooms,
   getRoom,
   getSlots,
+  getBranchRooms,
 };

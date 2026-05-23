@@ -11,5 +11,11 @@ router.get(
   checkRole('Управляющий'),
   managerController.getAnalytics,
 );
+router.get(
+  '/manager/bookings',
+  checkAuth,
+  checkRole('Управляющий'),
+  managerController.getBookingsHistory,
+);
 
 export default router;
