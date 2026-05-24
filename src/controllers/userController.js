@@ -96,5 +96,78 @@ const getTransactions = async (req, res) => {
   });
   res.json(data);
 };
+const updateMe = async (req, res) => {
+  try {
+    const { userId } = req.user;
+    const { name, surname, phone } = req.body;
 
-export default { getMe, getXpLogs, getTransactions };
+    if (!name?.trim()) {
+      return res.status(400).json({ message: 'Имя не может быть пустым' });
+    }
+
+    // Валидация телефона если передан
+    if (phone) {
+      const cleaned = String(phone).replace(/\D/g, '');
+      if (cleaned.length !== 11) {
+        return res.status(400).json({ message: 'Некорректный номер телефона' });
+      }
+      const existing = await prisma.user.findFirst({
+        where: { phone: cleaned, NOT: { user_id: userId } },
+      });
+      if (existing) {
+        return res.status(400).json({ message: 'Этот номер телефона уже используется' });
+      }
+    }
+
+    // Обновляем user_info и при необходимости user — в транзакции
+    const result = await prisma.$transaction(async (tx) => {
+      const updatedInfo = await tx.user_info.update({
+        where: { user_id: userId },
+        data: {
+          name: name.trim(),
+          surname: surname?.trim() ?? '',
+        },
+      });
+
+      let updatedPhone = null;
+      if (phone !== undefined) {
+        const cleaned = String(phone).replace(/\D/g, '');
+        const updatedUser = await tx.user.update({
+          where: { user_id: userId },
+          data: { phone: cleaned },
+        });
+        updatedPhone = updatedUser.phone;
+      }
+
+      return { updatedInfo, updatedPhone };
+    });
+
+    return res.status(200).json({
+      name: result.updatedInfo.name,
+      surname: result.updatedInfo.surname,
+      phone: result.updatedPhone, // null если не менялся
+    });
+  } catch (err) {
+    console.error('Ошибка обновления профиля:', err);
+    return res.status(500).json({ message: 'Не удалось обновить профиль' });
+  }
+};
+
+const deleteMe = async (req, res) => {
+  try {
+    const { userId } = req.user;
+
+    // Мягкое удаление — просто ставим флаг
+    await prisma.user_info.update({
+      where: { user_id: userId },
+      data: { is_deleted: true },
+    });
+
+    return res.status(200).json({ message: 'Профиль удалён' });
+  } catch (err) {
+    console.error('Ошибка удаления профиля:', err);
+    return res.status(500).json({ message: 'Не удалось удалить профиль' });
+  }
+};
+
+export default { getMe, getXpLogs, getTransactions, updateMe, deleteMe };
