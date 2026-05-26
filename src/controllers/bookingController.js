@@ -638,6 +638,33 @@ const cancelBooking = async (req, res) => {
         data: { status_id: 4 },
       });
 
+      // Проверяем, можно ли отменить (не завершено, не отменено ранее)
+      if (booking.status_id === 4 || booking.status_id === 3) {
+        return res.status(400).json({
+          message: 'Это бронирование уже нельзя отменить',
+        });
+      }
+
+      // Проверяем, что до начала брони больше 2 часов
+      const nowMoscow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+      const todayStr = nowMoscow.toISOString().slice(0, 10);
+      const bookingDateStr = new Date(booking.booking_date).toISOString().slice(0, 10);
+      const beginHour = new Date(booking.time_begin).getUTCHours();
+      const beginMinutes = new Date(booking.time_begin).getUTCMinutes();
+
+      const bookingStart = new Date(
+        `${bookingDateStr}T${String(beginHour).padStart(2, '0')}:${String(beginMinutes).padStart(2, '0')}:00.000Z`,
+      );
+
+      const diffMs = bookingStart.getTime() - nowMoscow.getTime();
+      const twoHoursMs = 2 * 60 * 60 * 1000;
+
+      if (diffMs < twoHoursMs) {
+        return res.status(400).json({
+          message: 'Отменить бронирование можно не позднее чем за 2 часа до начала сеанса',
+        });
+      }
+
       // 2. Если бронь была оплачена депозитом – возвращаем деньги
       if (booking.is_paid && booking.paid_sum > 0) {
         // Находим транзакцию списания, связанную с этим бронированием

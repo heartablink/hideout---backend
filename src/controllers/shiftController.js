@@ -16,7 +16,18 @@ const openShift = async (req, res) => {
       return res.status(403).json({ message: 'Вы не являетесь сотрудником клуба' });
     }
 
-    // 2. Проверяем, нет ли уже открытой смены у этого сотрудника
+    // 2. Определяем роль текущего пользователя
+    const permission = await prisma.permission.findFirst({
+      where: { user_id: userId },
+      include: { role: true },
+    });
+    const currentRole = permission?.role?.name_role;
+
+    if (!currentRole) {
+      return res.status(403).json({ message: 'Роль пользователя не определена' });
+    }
+
+    // 3. Проверяем, нет ли уже открытой смены у этого сотрудника
     const existingShift = await prisma.work_shift.findFirst({
       where: {
         staff_id: userId,
@@ -35,31 +46,52 @@ const openShift = async (req, res) => {
       });
     }
 
-    // 3. Проверяем, нет ли другой открытой смены в этом филиале
-    const branchShift = await prisma.work_shift.findFirst({
+    // 4. Проверяем, нет ли другой открытой смены в этом филиале
+    //    у сотрудника с ТАКОЙ ЖЕ ролью (в каждом филиале может быть
+    //    одновременно один Администратор и один Управляющий)
+    const branchStaffWithSameRole = await prisma.staff.findMany({
       where: {
         branch_id: staffRecord.branch_id,
-        closed_at: null,
-        staff_id: { not: userId }, // не наша смена
-      },
-      include: {
+        user_id: { not: userId },
         user: {
-          select: { user_info: { select: { name: true, surname: true } } },
+          permission: {
+            some: { role: { name_role: currentRole } },
+          },
         },
       },
+      select: { user_id: true },
     });
 
-    if (branchShift) {
-      return res.status(400).json({
-        message: `В этом филиале уже открыта смена сотрудником ${branchShift.user.user_info?.name} ${branchShift.user.user_info?.surname}`,
+    const sameRoleUserIds = branchStaffWithSameRole.map((s) => s.user_id);
+
+    if (sameRoleUserIds.length > 0) {
+      const conflictShift = await prisma.work_shift.findFirst({
+        where: {
+          branch_id: staffRecord.branch_id,
+          staff_id: { in: sameRoleUserIds },
+          closed_at: null,
+        },
+        include: {
+          user: {
+            select: { user_info: { select: { name: true, surname: true } } },
+          },
+        },
       });
+
+      if (conflictShift) {
+        const name = conflictShift.user.user_info?.name ?? '';
+        const surname = conflictShift.user.user_info?.surname ?? '';
+        return res.status(400).json({
+          message: `В этом филиале уже открыта смена ${currentRole}а — ${name} ${surname}`.trim(),
+        });
+      }
     }
 
-    // 4. Получаем IP адрес
+    // 5. Получаем IP адрес
     const ipAddress =
       req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
 
-    // 5. Открываем смену
+    // 6. Открываем смену
     const newShift = await prisma.work_shift.create({
       data: {
         staff_id: userId,
@@ -101,25 +133,34 @@ const closeShift = async (req, res) => {
       return res.status(400).json({ message: 'Открытой смены не найдено' });
     }
 
-    const nowMoscow = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    const todayStr = nowMoscow.toISOString().slice(0, 10);
-
-    // 2. Проверяем, нет ли активных бронирований (статус "Выполняется")
-    const activeBookings = await prisma.booking.findMany({
-      where: {
-        status_id: { in: [7, 1, 2, 6] }, // Выполняемые и будущие на текущий день
-        room: { branch_id: openShift.branch_id },
-        booking_date: new Date(`${todayStr}T00:00:00.000Z`),
-      },
+    // 2. Определяем роль текущего пользователя
+    const permission = await prisma.permission.findFirst({
+      where: { user_id: userId },
+      include: { role: true },
     });
+    const currentRole = permission?.role?.name_role;
 
-    if (activeBookings.length > 0) {
-      return res.status(400).json({
-        message: `Нельзя закрыть смену: есть ${activeBookings.length} активных и запланированных сеансов на сегодня`,
+    // 3. Для администраторов проверяем активные бронирования
+    if (currentRole === 'Администратор') {
+      const nowMoscow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+      const todayStr = nowMoscow.toISOString().slice(0, 10);
+
+      const activeBookings = await prisma.booking.findMany({
+        where: {
+          status_id: { in: [7, 1, 2, 6] },
+          room: { branch_id: openShift.branch_id },
+          booking_date: new Date(`${todayStr}T00:00:00.000Z`),
+        },
       });
+
+      if (activeBookings.length > 0) {
+        return res.status(400).json({
+          message: `Нельзя закрыть смену: есть ${activeBookings.length} активных и запланированных сеансов на сегодня`,
+        });
+      }
     }
 
-    // 3. Закрываем смену
+    // 4. Закрываем смену
     const closedShift = await prisma.work_shift.update({
       where: { shift_id: openShift.shift_id },
       data: {
@@ -145,7 +186,6 @@ const closeShift = async (req, res) => {
     return res.status(500).json({ message: 'Не удалось закрыть смену' });
   }
 };
-
 //ПОЛУЧИТЬ СТАТУС СМЕНЫ
 const getShiftStatus = async (req, res) => {
   try {

@@ -191,19 +191,35 @@ const updateRoomPrice = async (req, res) => {
       return res.status(400).json({ message: 'Новая цена должна отличаться от текущей' });
     }
 
-    const [updatedRoom] = await prisma.$transaction([
-      prisma.room.update({
-        where: { room_id: Number(roomId) },
-        data: { price: newPrice },
-      }),
-      prisma.price_history.create({
+    const now = new Date(Date.now() + 3 * 60 * 60 * 1000); // МСК
+
+    const updatedRoom = await prisma.$transaction(async (tx) => {
+      // 1. Закрываем текущую активную запись в истории (date_to = сейчас)
+      await tx.price_history.updateMany({
+        where: {
+          room_id: Number(roomId),
+          date_to: null, // активная запись — та, у которой нет даты окончания
+        },
+        data: { date_to: now },
+      });
+
+      // 2. Создаём новую запись истории
+      await tx.price_history.create({
         data: {
           room_id: Number(roomId),
           price: newPrice,
           admin_id: userId,
+          date_from: now,
+          // date_to остаётся null — запись активна
         },
-      }),
-    ]);
+      });
+
+      // 3. Обновляем цену в самой комнате
+      return tx.room.update({
+        where: { room_id: Number(roomId) },
+        data: { price: newPrice },
+      });
+    });
 
     return res.status(200).json({ ...updatedRoom, price: Number(updatedRoom.price) });
   } catch (err) {
@@ -211,7 +227,6 @@ const updateRoomPrice = async (req, res) => {
     return res.status(500).json({ message: 'Не удалось обновить цену' });
   }
 };
-
 // ─── Мягкое удаление комнаты ────────────────────────────────────────────────
 const deleteRoom = async (req, res) => {
   try {
